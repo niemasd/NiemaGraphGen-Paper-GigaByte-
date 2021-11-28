@@ -1,0 +1,461 @@
+\documentclass[a4paper,num-refs,gigabyte]{oup-contemporary}
+\journal{gigabyte}
+\usepackage{graphicx}
+\usepackage{siunitx}
+\usepackage{xfrac}
+\usepackage{amsmath}
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode}
+\algnewcommand{\LineComment}[1]{\State  \(\triangleright\) #1 \hfill~}
+
+\title{NiemaGraphGen: A memory-efficient global-scale contact network simulation toolkit}
+\author[1,\authfn{1}]{Niema Moshiri}
+\affil[1]{Department of Computer Science \& Engineering, UC San Diego, La Jolla, 92093, USA}
+\authnote{\authfn{1}niema@ucsd.edu}
+
+\papercat{Technical Release}
+\runningauthor{Moshiri}
+
+%%% Should only be set by an editor
+\jvolume{00}
+\jnumber{0}
+\jyear{2020}
+
+\begin{document}
+
+\begin{frontmatter}
+\maketitle
+\begin{abstract}
+Epidemic simulations require the ability to sample contact networks from various random graph models. Existing methods can simulate city-scale or even country-scale contact networks, but they are unable to feasibly simulate global-scale contact networks due to high memory consumption. NiemaGraphGen (NGG) is a memory-efficient graph generation tool that enables the simulation of global-scale contact networks. NGG avoids storing the entire graph in memory and is instead intended to be used in a data streaming pipeline, resulting in memory consumption that is orders of magnitude smaller than existing tools. NGG provides a massively-scalable solution for simulating social contact networks, enabling global-scale epidemic simulation studies.
+\end{abstract}
+
+\begin{keywords}
+software; contact network; simulation; epidemiology
+\end{keywords}
+\end{frontmatter}
+
+\section{Statement of Need}
+
+The ability to simulate epidemics enables the evaluation of the effectiveness of molecular epidemiological tools~\cite{Moshiri2021} as well as the inference of critical public health information, such as the time of zoonosis of SARS-CoV-2~\cite{Pekar2021}. The spread of viral pathogens is driven by social contact networks~\cite{Kelly1991}, and the structure of the underlying contact network across which a virus transmits is heavily influenced by the mode of disease transmission, necessitating a proper match between pathogen and network model when designing epidemic simulation experiments~\cite{Craft2015}. As a result, epidemic simulation frameworks such as FAVITES require the flexibility to simulate contact networks under a wide selection of network models~\cite{Moshiri2018}.
+
+The two most popular existing tools for simulating networks under various stochastic models are NetworkX~\cite{Hagberg2008}, which is available as a Python package, and iGraph~\cite{Csardi2006}, which is available as a C library with R, Python, and Mathematica interfaces. While these tools support random network generation, they place an emphasis on the analysis and manipulation of networks, and as a result, they require loading the entire network in memory. This is feasible for community-level or even city-scale epidemic simulations, but when simulating global-scale pandemics such as COVID-19, the memory consumption becomes prohibitively large.
+
+\section{Implementation}
+
+NiemaGraphGen (NGG) is a memory-efficient undirected graph generation tool that enables the simulation of global-scale contact networks. NGG is intended to be used in data-streaming epidemic simulation pipelines and thus avoids storing the entire contact network in memory, resulting in faster runtime as well as memory consumption that is orders of magnitude smaller than existing tools (Fig.~\ref{fig:benchmark}).
+
+NGG is written in C++ and has no dependencies beyond a modern C++ compiler (and optionally the command line \texttt{make} tool for convenience). When NGG is compiled, a separate executable is produced for each model. NGG is also available via a Docker container on DockerHub (\href{https://hub.docker.com/r/niemasd/niemagraphgen}{niemasd/niemagraphgen}). NGG currently supports the following stochastic and deterministic models: Barab\'asi--Albert~\cite{Barabasi1999}, Barbell, Complete, Cycle, Empty, Erd{\H o}s--R\'enyi~\cite{Erdos1959}, Newman--Watts--Strogatz~\cite{Newman1999}, Path, and Ring Lattice.
+
+By default, NGG uses 4-byte unsigned integers to represent nodes in the network, which supports networks with up to $2^{32}-1\approx4.3$ billion nodes, but users can use 2-byte (up to $2^{16}-1=65,535$ nodes) or 1-byte (up to $2^8-1=255$ nodes) unsigned integers to reduce memory consumption, or they can use 8-byte unsigned integers (up to $2^{64}-1\approx18$ quintillion nodes) to support larger networks at the cost of higher memory consumption.
+
+By default, NGG outputs networks in the tab-delimited edge list format used by FAVITES~\cite{Moshiri2018}. However, for ultra-large simulation studies, plain-text edge list representations of networks may result in extremely large files, so NGG also supports a compact binary output format that uses exactly $2b\left|E\right|+1$ bytes to represent a network with $\left|E\right|$ edges in which nodes are represented using $b$-byte unsigned integers. Both supported output formats are highly structured and can thus be compressed reasonably well using standard compression tools (e.g. \texttt{gzip}).
+
+\subsection{Memory-efficient graph sampling}
+In this subsection, we discuss the memory-efficient graph sampling algorithms implemented within NGG. Most models implemented in NGG are sampled in $\mathcal{O}\left(1\right)$ memory.
+
+\subsubsection{Complete graph}
+The complete graph, in which every node has an edge to every other node, is trivial to sample in $\mathcal{O}\left(1\right)$ memory (Alg.~\ref{alg:complete}).
+
+\begin{algorithm}[H]
+\caption{Sample complete graph}
+\label{alg:complete}
+\begin{algorithmic}
+\Procedure{Complete}{$n$}
+  \For{$u\gets0$ to $n-2$}
+    \For{$v\gets u+1$ to $n-1$}
+      \State Output edge $\left(u,v\right)$
+    \EndFor
+  \EndFor
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Path graph}
+The path graph, in which $n$ nodes are connected in a linear path, is trivial to sample in $\mathcal{O}\left(1\right)$ memory (Alg.~\ref{alg:path}).
+
+\begin{algorithm}[H]
+\caption{Sample path graph}
+\label{alg:path}
+\begin{algorithmic}
+\Procedure{Path}{$n$}
+  \For{$u\gets0$ to $n-2$}
+    \State Output edge $\left(u,u+1\right)$
+  \EndFor
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Barbell graph}
+The barbell graph, which consists of two complete graphs with $n_1$ nodes (Alg.~\ref{alg:complete}) connected by a path graph with $n_2$ nodes (Alg.~\ref{alg:path}), can be sampled in $\mathcal{O}\left(1\right)$ memory (Alg.~\ref{alg:barbell}).
+
+\begin{algorithm}[H]
+\caption{Sample barbell graph}
+\label{alg:barbell}
+\begin{algorithmic}
+\Procedure{Barbell}{$n_1,n_2$}
+  \LineComment{Sample $Complete\left(n_1\right)$ twice}
+  \For{$u\gets0$ to $n_1-2$}
+    \For{$v\gets u+1$ to $n_1-1$}
+      \State Output edge $\left(u,v\right)$\Comment{$Complete\left(n_1\right)_1$}
+      \State Output edge $\left(n_1+u,n_1+v+u\right)$\Comment{$Complete\left(n_1\right)_2$}
+    \EndFor
+  \EndFor
+  \LineComment{Sample $Path\left(n_2\right)$}
+  \For{$u\gets2n_1$ to $2n_1+n_2-2$}
+    \State Output edge $\left(u,u+1\right)$
+  \EndFor
+  \LineComment{Connect $Complete\left(n_1\right)_1$ and $Complete\left(n_1\right)_2$ to $Path\left(n_2\right)$}
+  \State Output edge $\left(0,2n_1\right)$
+  \State Output edge $\left(n_1,2n_1+n_2-1\right)$
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Cycle graph}
+The cycle graph, which consists of a single $n$-node cycle, is trivial to sample in $\mathcal{O}\left(1\right)$ memory: it is simply a path graph (Alg.~\ref{alg:path}) with a single additional edge connecting the start and end nodes (Alg.~\ref{alg:cycle}).
+
+\begin{algorithm}[H]
+\caption{Sample cycle graph}
+\label{alg:cycle}
+\begin{algorithmic}
+\Procedure{Cycle}{$n$}
+  \State $Path\left(n\right)$
+  \State Output edge $\left(0,n-1\right)$
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Ring lattice graph}
+The ring lattice graph, in which every node has an edge to each of its $k$ neighbors (where $k$ must be even), is essentially a generalization of the cycle graph. Specifically, $Cycle\left(n\right)$ is equivalent to $RingLattice\left(n,2\right)$. The ring lattice graph can be sampled in $\mathcal{O}\left(1\right)$ memory (Alg.~\ref{alg:ringlattice}).
+
+\begin{algorithm}[H]
+\caption{Sample ring lattice graph}
+\label{alg:ringlattice}
+\begin{algorithmic}
+\Procedure{RingLattice}{$n,k$}
+  \For{$u\gets0$ to $n-1$}
+    \For{$d\gets1$ to $\sfrac{k}{2}$}
+      \State Output edge $\left(u, \left(u+i\right)\bmod n\right)$
+    \EndFor
+  \EndFor
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Erd{\H o}s--R\'enyi model}
+The Erd{\H o}s--R\'enyi model is a random graph model for generating networks, and it has two parameters: the total number of nodes in the network $\left(n\right)$ and the probability that any of the $n\choose 2$ possible edges is included $\left(p\right)$. A naive algorithm can be used to sample graphs under the model in $\mathcal{O}\left(1\right)$ memory (Alg.~\ref{alg:er-naive}).
+
+\begin{algorithm}[H]
+\caption{Sample Erd{\H o}s--R\'enyi model (naive)}
+\label{alg:er-naive}
+\begin{algorithmic}[1]
+\Procedure{ErdosRenyiNaive}{$n,p$}
+  \For{$u\gets0$ to $n-2$}
+    \For{$v\gets u+1$ to $n-1$}
+      \If{$Bernoulli\left(p\right)=1$}
+        \State Output edge $\left(u,v\right)$
+      \EndIf
+    \EndFor
+  \EndFor
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+However, the time complexity of the naive algorithm is $\mathcal{O}\left(n^2\right)$, making it unsuitable for ultra-large large networks. Instead, an alternative algorithm can also be implemented in $\mathcal{O}\left(1\right)$ memory (Alg.~\ref{alg:er-fast}), which is faster than the naive algorithm when the expected number of edges $\left(p{n\choose 2}\right)$ is relatively low (i.e., the network is relatively sparse)~\cite{Batagelj2005}, as is the case with social contact networks.
+
+\begin{algorithm}[H]
+\caption{Sample Erd{\H o}s--R\'enyi model}
+\label{alg:er-fast}
+\begin{algorithmic}[1]
+\Procedure{ErdosRenyiFast}{$n,p$}
+  \State $u\gets1$
+  \State $v\gets-1$
+  \While{$u<n$}
+    \State $v\gets v+1+\frac{\ln\left(1-Uniform\left(0,1\right)\right)}{\ln\left(1-p\right)}$
+    \While{$v\ge u$ and $u<n$}
+      \State $v\gets v-u$
+      \State $u\gets u+1$
+    \EndWhile
+    \If{$u<n$}
+      \State Output edge $\left(u,v\right)$
+    \EndIf
+  \EndWhile
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Barab\'asi--Albert model}
+The Barab\'asi--Albert model is a random graph model for generating scale-free networks, and it has two parameters: the total number of nodes in the network ($n$) and the number of edges to attach from new nodes to existing nodes ($m$). An algorithm exists to sample graphs under the model in $\mathcal{O}\left(nm\right)$ memory. Graphs sampled under $BarabasiAlbert\left(n,m\right)$ will have exactly $m\left(n-m\right)$ edges, with exactly $m$ targets selected during each iteration of the sampling algorithm. Thus, when implementing the sampling algorithm, memory for $repeat$ and $targets$ can be reserved up-front to avoid array resizing operations during the algorithm (Alg.~\ref{alg:ba}).
+
+\begin{algorithm}[H]
+\caption{Sample Barab\'asi--Albert model}
+\label{alg:ba}
+\begin{algorithmic}[1]
+\Procedure{BarabasiAlbert}{$n,m$}
+  \State $repeat\gets ArrayList\left(\left\{0,1,\ldots,m-1\right\}\right)$
+  \State $targets\gets HashTable\left(empty\right)$
+  \For{$u\gets m$ to $n-1$}
+    \State Clear $targets$
+    \While{$\left|targets\right|<m$}
+      \State Add $Uniform\left(repeat\right)$ to $targets$
+    \EndWhile
+    \ForAll{$v\in targets$}
+      \State Output edge $\left(u,v\right)$
+      \State $repeat\gets repeat+\left\{u,v\right\}$
+    \EndFor
+  \EndFor
+  \EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Newman--Watts--Strogatz model}
+The Newman--Watts--Strogatz model, an extension of the Watts--Strogatz model~\cite{Watts1998}, is a random graph model for generating connected networks with small-world properties. Unlike the Watts--Strogatz model, which may yield in disconnected graphs, the Newman--Watts--Strogatz model is guaranteed to yield connected graphs. The Newman--Watts--Strogatz model begins by sampling $RingLattice\left(n,k\right)$, and for each edge $\left(u,v\right)$ in in the initial ring lattice, a new ``shortcut'' edge $\left(u,w\right)$ is added with probability $p$. This motivates a naive sampling algorithm (Alg.~\ref{alg:nws-naive}).
+
+\begin{algorithm}[H]
+\caption{Sample Newman--Watts--Strogatz model (naive)}
+\label{alg:nws-naive}
+\begin{algorithmic}[1]
+\Procedure{NewmanWattsStrogatzNaive}{$n,k,p$}
+  \State $ring\gets HashTable\left( RingLattice\left(n,k\right)\right)$
+  \State $shortcuts\gets HashTable\left(empty\right)$
+  \ForAll{$\left(u,v\right)\in ring$}
+    \If{$Bernoulli\left(p\right)=1$}
+      \State $w\gets u$
+      \While{$w=u$ or $\left(u,w\right)\in ring\cup shortcuts$}
+        \State $w\gets Uniform\left(0,n-1\right)$
+      \EndWhile
+      \State Output edge $\left(u,w\right)$
+      \State Add edge $\left(u,w\right)$ to $shortcuts$
+    \EndIf
+  \EndFor
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+However, the naive algorithm requires all edges of the graph to be stored in memory, which results in prohibitively large memory requirements for ultra-large networks. An alternative memory-efficient algorithm can be devised. There are $n$ nodes, and in the original ring lattice, each node has $k$ edges. Therefore, the initial ring lattice graph has $\sfrac{nk}{2}$ undirected edges, meaning we sample from $Bernoulli\left(p\right)$ exactly $\sfrac{nk}{2}$. The total number of successful Bernoulli trials is thus a single sampling from $Binomial\left(\sfrac{nk}{2},p\right)$. Further, each node has $n-k-1$ possible new edges that can be added during the ``shortcut''-adding step; these edges can be represented by a matrix with $n$ rows (representing $u$) and $n-k-1$ columns (representing $w$):
+
+\begin{equation}
+\begin{matrix}
+0:\\
+1:\\
+2:\\
+\ldots\\
+i:\\
+\ldots\\
+\end{matrix}
+\begin{bmatrix}
+\sfrac{k}{2}+1 & \sfrac{k}{2}+2 & \ldots & \left(n-\sfrac{k}{2}-1\right)\bmod n\\
+\sfrac{k}{2}+2 & \sfrac{k}{2}+3 & \ldots & \left(n-\sfrac{k}{2}-0\right)\bmod n\\
+\sfrac{k}{2}+3 & \sfrac{k}{2}+4 & \ldots & \left(n-\sfrac{k}{2}+1\right)\bmod n\\
+\ldots & \ldots & \ldots & \ldots\\
+\sfrac{k}{2}+i & \ldots & \ldots & \left(n-\sfrac{k}{2}+i-1\right)\bmod n\\
+\ldots & \ldots & \ldots & \ldots\\
+\end{bmatrix}
+\end{equation}
+
+If $\left(u,v\right)$ is selected, then $\left(v,u\right)$ cannot be selected because the graph is undirected. Thus, we can disregard the bottom-right portion of the matrix. We can then represent each cell of the matrix with its corresponding index in an array representation. For example, for $n=7$ and $k=2$ ($X$ denotes ``disregarded''):
+
+\begin{equation}
+\begin{matrix}
+0:\\
+1:\\
+2:\\
+3:\\
+4:\\
+5:\\
+6:\\
+\end{matrix}
+\begin{bmatrix}
+2 & 3 & 4 & 5\\
+3 & 4 & 5 & 6\\
+4 & 5 & 6 & 0\\
+5 & 6 & 0 & 1\\
+6 & 0 & 1 & 2\\
+0 & 1 & 2 & 3\\
+1 & 2 & 3 & 4\\
+\end{bmatrix}
+\rightarrow
+\begin{matrix}
+0:\\
+1:\\
+2:\\
+3:\\
+4:\\
+5:\\
+6:\\
+\end{matrix}
+\begin{bmatrix}
+2 & 3 & 4 & 5\\
+3 & 4 & 5 & 6\\
+4 & 5 & 6 & X\\
+5 & 6 & X & X\\
+6 & X & X & X\\
+X & X & X & X\\
+X & X & X & X\\
+\end{bmatrix}
+\rightarrow
+\begin{bmatrix}
+0 & 1 & 2 & 3\\
+4 & 5 & 6 & 7\\
+8 & 9 & 10 & X\\
+11 & 12 & X & X\\
+13 & X & X & X\\
+X & X & X & X\\
+X & X & X & X\\
+\end{bmatrix}
+\end{equation}
+
+With this representation, sampling ``shortcut'' edges can be reduced to an efficient algorithm: randomly select a collection of $Binomial\left(\sfrac{nk}{2},p\right)$ integers from $Uniform\left(0,\frac{n\left(n-k-1\right)}{2}-1\right)$ without replacement, then map from the selected integers to their corresponding cells in the matrix, and finally map from cells in the matrix to edges $\left(u,w\right)$.
+
+Define a ``full'' row to be a row without any $X$ symbols (i.e., no disregarded cells), and define an ``empty'' row to be a row that only contains $X$ symbols (i.e., all cells were disregarded). The last column in the first row contains node $n-\sfrac{k}{2}-1$, and the last column in the last full row has node $n-1$, so there are $\left(n-1\right)-\left(n-\sfrac{k}{2}+1\right)+1=\sfrac{k}{2}+1$ non-empty rows: $0$ through $\sfrac{k}{2}$. Thus, for rows $0$ through $\sfrac{k}{2}$ (i.e., the full rows of the matrix), we can imagine the following representation in which cells are filled with the corresponding index of the array representation of the matrix:
+
+\begin{equation}
+\begin{matrix}
+0:\\
+1:\\
+2:\\
+\ldots\\
+i:\\
+\ldots\\
+\sfrac{k}{2}:\\
+\end{matrix}
+\begin{bmatrix}
+0 & 1 & \ldots & n-k-2\\
+n-k-1 & n-k & \ldots & 2\left(n-k-1\right)-1\\
+2\left(n-k-1\right) & 2\left(n-k-1\right)+1 & \ldots & 3\left(n-k-1\right)-1\\
+\ldots & \ldots & \ldots & \ldots\\
+i\left(n-k-1\right) & i\left(n-k-1\right)+1 & \ldots & \left(i+1\right)\left(n-k-1\right)-1\\
+\ldots & \ldots & \ldots & \ldots\\
+\frac{k}{2}\left(n-k-1\right) & \frac{k}{2}\left(n-k-1\right)+1 & \ldots & \left(\frac{k}{2}+1\right)\left(n-k-1\right)-1\\
+\end{bmatrix}
+\end{equation}
+
+Row $\sfrac{k}{2}+1$ has exactly 1 empty cell, row $\sfrac{k}{2}+2$ has exactly 2 empty cells, etc. Thus, the first row that is completely empty (i.e., $n-k-1$ empty cells) is row $\sfrac{k}{2}+\left(n-k-1\right)=n-\sfrac{k}{2}-1$. Thus, the remaining portion of the matrix from which ``shortcuts'' can be sampled can be represented as follows ($X$ denotes ``disregarded'', and $Y$ denotes ``not disregarded''):
+
+\begin{equation}
+\begin{matrix}
+\sfrac{k}{2}+1:\\
+\sfrac{k}{2}+2:\\
+\ldots\\
+n-\sfrac{k}{2}-2:\\
+\end{matrix}
+\begin{bmatrix}
+Y & Y & Y & \ldots & Y & X\\
+Y & Y & Y & \ldots & X & X\\
+\ldots & \ldots & \ldots & \ldots & \ldots & \ldots\\
+Y & X & X & \ldots & X & X\\
+\end{bmatrix}
+\end{equation}
+
+This is simply a $\left(n-k-2\right)$-dimensional square matrix with a triangle in the upper-left. We can now use these findings to define an efficient algorithm that only has to keep the ``shortcut'' edges in memory, rather than \textit{all} edges (Alg.~\ref{alg:nws-efficient}).
+
+\begin{algorithm}[H]
+\caption{Sample Newman--Watts--Strogatz model}
+\label{alg:nws-efficient}
+\begin{algorithmic}[1]
+\Procedure{NewmanWattsStrogatzEfficient}{$n,k,p$}
+  \State $RingLattice\left(n,k\right)$
+  \State $T_i\gets\left(\frac{k}{2}+1\right)\left(n-k-1\right)$\Comment{Start of bottom triangle}
+  \State $e_s\gets Binomial\left(\frac{nk}{2},p\right)$\Comment{Number of ``shortcut'' edges}
+  \State $inds\gets SampleNoReplacement\left(e_s,0,\frac{n\left(n-k-1\right)}{2}-1\right)$
+  \ForAll{$i\in inds$}
+    \If{$i<T_i$}\Comment{Top rectangle}
+      \State $u\gets\left\lfloor\frac{i}{n-k-1}\right\rfloor$
+      \State $c\gets i\bmod \left(n-k-1\right)$
+    \Else\Comment{Bottom triangle}
+      \State $t\gets i-T_i$
+      \State $r\gets n-k-3-\left\lfloor\frac{\sqrt{-8t+4\left(n-k-1\right)\left(n-k-2\right)-7}-1}{2}\right\rfloor$
+      \State $u\gets r+\frac{k}{2}+1$
+      \State $c\gets t-{n-k-1\choose2}+{n-k-1-r\choose2}$
+    \EndIf
+    \State $w\gets u+c+\frac{k}{2}+1$
+    \State Output edge $\left(u,w\right)$
+  \EndFor
+\EndProcedure
+~\\
+\LineComment{Sample $n$ integers from $Uniform\left(a,b\right)$, no replacement}
+\LineComment{Algorithm attributed to Robert Floyd}
+\Procedure{SampleNoReplacement}{$n,a,b$}
+  \State $samples\gets HashTable\left(empty\right)$
+  \For{$r\gets b-n+1$ to $b$}
+    \State $v\gets Uniform\left(a,r\right)$
+    \If{$v$ already exists in $samples$}
+      \State Add $r$ to $samples$
+    \Else
+      \State Add $v$ to $samples$
+    \EndIf
+  \EndFor
+  \State Return $samples$
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Benchmarking experiment}
+To benchmark network generation runtime and memory consumption, we used NetworkX, iGraph, and NGG to simulate 10 replicate networks of various sizes, and we used the GNU \texttt{time} command line tool to measure total runtime and peak memory usage. We chose to explore Complete, Erd{\H o}s--R\'enyi, Barab\'asi--Albert, and Newman--Watts--Strogatz graphs in this benchmarking experiment due to their popularity in modeling social contact networks in epidemiological studies.
+
+In addition to the number of nodes in the network $\left(n\right)$, the Erd{\H o}s--R\'enyi, Barab\'asi--Albert, and Newman--Watts--Strogatz models have additional parameters that controls the expected degree $\left(E_d\right)$ of the network; the choice of $E_d=40$ was made arbitrarily, and the same trend was observed for $E_d=10$ and $E_d=20$. All tools are single-threaded, and all runs were executed sequentially on an 8-core 2.0 GHz Intel Xeon CPU with 8 GB of memory.
+
+The results of the benchmarking experiment can be found in Figure~\ref{fig:benchmark}. iGraph was excluded from the Newman--Watts--Strogatz simulations because iGraph does not support sampling from the Newman--Watts--Strogatz model. Further, NetworkX was unable to run to completion on larger network sizes due to memory requirements that exceeded the 8 GB memory of the benchmarking machine. In all scenarios, NGG was the fastest and least memory-intensive of the three tools.
+
+With respect to Complete graphs, NGG is marginally faster than NetworkX and iGraph, and the peak memory usage of NGG is orders of magnitude smaller than both NetworkX and iGraph, with the gap widening as network size grows. With respect to Erd{\H o}s--R\'enyi graphs, NGG is $\sim$4x faster than NetworkX and $\sim$1.5x faster than iGraph, and its peak memory usage is orders of magnitude smaller than both tools, with the gap again widening as network size grows. With respect to Barab\'asi--Albert graphs, NGG is $\sim$4x faster than NetworkX and $\sim$1.5x faster than iGraph, and its peak memory usage is consistently $\sim$20x smaller than NetworkX and $\sim$3x smaller than iGraph. With respect to Newman--Watts--Strogatz graphs, NGG is $\sim$3x faster than NetworkX, and its peak memory usage is $\sim$100x smaller than NetworkX, with the gap widening as network size grows. Importantly, aside from the Barab\'asi--Albert and Newman--Watts-Strogatz models, all network models implemented in NGG have constant memory usage regardless of network size.
+
+\begin{figure*}%[b!]  %% Add a [b!] if you prefer the wide image to be at the bottm of the page
+\centering
+\includegraphics[width=\textwidth]{Fig1}
+\caption{Benchmarking results. Total runtime (left) and peak memory usage (right) for NetworkX, iGraph, and NGG for various network models and sizes.}\label{fig:benchmark}
+\end{figure*}
+
+\section{Conclusions}
+We introduce NiemaGraphGen (NGG), a memory-efficient graph generation tool that enables the simulation of global-scale contact networks. We benchmarked NGG against the two most popular network simulation tools, NetworkX and iGraph, and we showed that NGG was consistently the fastest and had orders of magnitude lower memory consumption than other tools (typically constant with respect to network size).
+
+
+\section{Availability of source code and requirements}
+
+\begin{itemize}
+\item Project name: NiemaGraphGen (NGG)
+\item Project home page: \url{https://github.com/niemasd/NiemaGraphGen}
+\item Operating system(s): Platform independent
+\item Programming language: C++
+\item Other requirements: C++11 or higher
+\item License: GNU GPL v3.0
+\end{itemize}
+
+\section{Availability of Test Data}
+
+The data sets supporting the results of this article, along with all relevant scripts and commands, are available in the following GitHub repository:
+
+\url{https://github.com/niemasd/NiemaGraphGen-Paper}
+
+The same data and scripts can be found in the following portable Code Ocean environment:
+
+\url{https://doi.org/10.24433/CO.4009211.v1}
+
+\section{Declarations}
+
+\subsection{List of abbreviations}
+NGG: NiemaGraphGen
+
+\subsection{Ethical Approval}
+Not applicable.
+
+\subsection{Competing Interests}
+
+The authors declare that they have no competing interests.
+
+\subsection{Funding}
+
+This work has been supported by the National Science Foundation (NSF) grant NSF-2028040 to N.M.
+
+
+\subsection{Author's Contributions}
+
+N.M. implemented the software tool described in this manuscript, designed and executed the benchmarking experiment, and wrote the manuscript.
+
+\section{Acknowledgements}
+
+We would like to thank Jonathan Pekar, Joel O. Wertheim, Michael Worobey, and Tajana Rosing for fruitful conversations.
+
+%% Specify your .bib file name here, without the extension
+\bibliography{paper-refs}
+
+\end{document}
