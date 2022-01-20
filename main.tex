@@ -11,7 +11,7 @@
 \title{NiemaGraphGen: A memory-efficient global-scale contact network simulation toolkit}
 \author[1,\authfn{1}]{Niema Moshiri}
 \affil[1]{Department of Computer Science \& Engineering, UC San Diego, La Jolla, 92093, USA}
-\authnote{\authfn{1}niema@ucsd.edu}
+\authnote{\authfn{1}niema@ucsd.edu, ORCID: 0000-0003-2209-8128}
 
 \papercat{Technical Release}
 \runningauthor{Moshiri}
@@ -26,19 +26,21 @@
 \begin{frontmatter}
 \maketitle
 \begin{abstract}
-Epidemic simulations require the ability to sample contact networks from various random graph models. Existing methods can simulate city-scale or even country-scale contact networks, but they are unable to feasibly simulate global-scale contact networks due to high memory consumption. NiemaGraphGen (NGG) is a memory-efficient graph generation tool that enables the simulation of global-scale contact networks. NGG avoids storing the entire graph in memory and is instead intended to be used in a data streaming pipeline, resulting in memory consumption that is orders of magnitude smaller than existing tools. NGG provides a massively-scalable solution for simulating social contact networks, enabling global-scale epidemic simulation studies.
+Epidemic simulations require the ability to sample contact networks from various random graph models. Existing methods can simulate city-scale or even country-scale contact networks, but they are unable to feasibly simulate global-scale contact networks due to high memory consumption. NiemaGraphGen (NGG) is a memory-efficient graph generation tool that enables the simulation of global-scale contact networks. NGG avoids storing the entire graph in memory and is instead intended to be used in a data streaming pipeline, resulting in memory consumption that is orders of magnitude smaller than existing tools. NGG provides a massively-scalable solution for simulating social contact networks, enabling global-scale epidemic simulation studies.\\
+~\\
+\textbf{Subject Areas:} Software and Workflows, Bioinformatics, Statistics and Probability
 \end{abstract}
-
-\begin{keywords}
-software; contact network; simulation; epidemiology
-\end{keywords}
 \end{frontmatter}
 
 \section{Statement of Need}
 
-The ability to simulate epidemics enables the evaluation of the effectiveness of molecular epidemiological tools~\cite{Moshiri2021} as well as the inference of critical public health information, such as the time of zoonosis of SARS-CoV-2~\cite{Pekar2021}. The spread of viral pathogens is driven by social contact networks~\cite{Kelly1991}, and the structure of the underlying contact network across which a virus transmits is heavily influenced by the mode of disease transmission, necessitating a proper match between pathogen and network model when designing epidemic simulation experiments~\cite{Craft2015}. As a result, epidemic simulation frameworks such as FAVITES require the flexibility to simulate contact networks under a wide selection of network models~\cite{Moshiri2018}.
+The ability to simulate epidemics enables the evaluation of the effectiveness of molecular epidemiological tools~\cite{Moshiri2021} as well as the inference of critical public health information, such as the time of zoonosis of SARS-CoV-2~\cite{Pekar2021}.
+Epidemic simulation frameworks such as FAVITES simulate a random contact network, a random transmission network spread along the contact network, a viral phylogeny constrained by the transmission network, and a random viral sequence evolutionary process (e.g. single gene/protein, whole genome) along the phylogeny~\cite{Moshiri2018}.
+The spread of viral pathogens is driven by social contact networks~\cite{Kelly1991}, and the structure of the underlying contact network across which a virus transmits is heavily influenced by the mode of disease transmission, necessitating a proper match between pathogen and network model when designing epidemic simulation experiments~\cite{Craft2015}. As a result, epidemic simulation frameworks such as FAVITES require the flexibility to simulate contact networks under a wide selection of network models.
 
 The two most popular existing tools for simulating networks under various stochastic models are NetworkX~\cite{Hagberg2008}, which is available as a Python package, and iGraph~\cite{Csardi2006}, which is available as a C library with R, Python, and Mathematica interfaces. While these tools support random network generation, they place an emphasis on the analysis and manipulation of networks, and as a result, they require loading the entire network in memory. This is feasible for community-level or even city-scale epidemic simulations, but when simulating global-scale pandemics such as COVID-19, the memory consumption becomes prohibitively large.
+
+Tools such as EpiSims~\cite{Eubank2004}, EpiSimdemics~\cite{Barrett2008}, and EpiFast~\cite{Bisset2009} provide efficient solutions for simulating transmission networks \textit{along} a \textit{given} contact network, but they do not simulate the contact network itself. For simulating contact networks, cuPPA~\cite{Alam2017} and  cuPPA-Hash~\cite{Alam2019} provide GPU solutions for massively-parallelized simulation of ultra-large scale-free networks under the Copy Model~\cite{Kumar2000}, but they do not support the simulation of contact networks under other graph models, a critical feature for epidemiologists hoping to fine-tune simulations to the contact patterns of a given outbreak or population of interest.
 
 \section{Implementation}
 
@@ -48,7 +50,10 @@ NGG is written in C++ and has no dependencies beyond a modern C++ compiler (and 
 
 By default, NGG uses 4-byte unsigned integers to represent nodes in the network, which supports networks with up to $2^{32}-1\approx4.3$ billion nodes, but users can use 2-byte (up to $2^{16}-1=65,535$ nodes) or 1-byte (up to $2^8-1=255$ nodes) unsigned integers to reduce memory consumption, or they can use 8-byte unsigned integers (up to $2^{64}-1\approx18$ quintillion nodes) to support larger networks at the cost of higher memory consumption.
 
-By default, NGG outputs networks in the tab-delimited edge list format used by FAVITES~\cite{Moshiri2018}. However, for ultra-large simulation studies, plain-text edge list representations of networks may result in extremely large files, so NGG also supports a compact binary output format that uses exactly $2b\left|E\right|+1$ bytes to represent a network with $\left|E\right|$ edges in which nodes are represented using $b$-byte unsigned integers. Both supported output formats are highly structured and can thus be compressed reasonably well using standard compression tools (e.g. \texttt{gzip}).
+By default, NGG outputs networks in the tab-delimited edge list format used by FAVITES~\cite{Moshiri2018}.
+Output files in this format can then be used as input files within FAVITES, which will then be able to simulate a transmission network, viral phylogeny, and sequences along the given contact network.
+However, for ultra-large simulation studies, plain-text edge list representations of networks may result in extremely large files, so NGG also implements a proprietary compact binary output format that uses exactly $2b\left|E\right|+1$ bytes to represent a network with $\left|E\right|$ edges in which nodes are represented using $b$-byte unsigned integers. Both supported output formats are highly structured and can thus be compressed reasonably well using standard compression tools (e.g. \texttt{gzip}).
+FAVITES does not currently support this compact binary format, so contact networks output in this binary format will not be usable as input files in the current version of FAVITES (v1.2.8), but support for this binary format will be implemented into FAVITES in the near future. Code examples for loading contact networks in NGG's output formats can be found in the NGG GitHub Wiki (\href{https://github.com/niemasd/NiemaGraphGen/wiki}{https://github.com/niemasd/NiemaGraphGen/wiki}).
 
 \subsection{Memory-efficient graph sampling}
 In this subsection, we discuss the memory-efficient graph sampling algorithms implemented within NGG. Most models implemented in NGG are sampled in $\mathcal{O}\left(1\right)$ memory.
@@ -402,7 +407,7 @@ With respect to Complete graphs, NGG is marginally faster than NetworkX and iGra
 \begin{figure*}%[b!]  %% Add a [b!] if you prefer the wide image to be at the bottm of the page
 \centering
 \includegraphics[width=\textwidth]{Fig1}
-\caption{Benchmarking results. Total runtime (left) and peak memory usage (right) for NetworkX, iGraph, and NGG for various network models and sizes.}\label{fig:benchmark}
+\caption{Benchmarking results. Total runtime (left) and peak memory usage (right) for NetworkX, iGraph, and NGG for various network models and sizes. Each point is the average of 10 replicates, and error bars (which are smaller than the marker sizes) represent 95\% confidence intervals. All tools are single-threaded, and all runs were executed sequentially on an 8-core 2.0 GHz Intel Xeon CPU with 8 GB of memory.}\label{fig:benchmark}
 \end{figure*}
 
 \section{Conclusions}
@@ -414,21 +419,27 @@ We introduce NiemaGraphGen (NGG), a memory-efficient graph generation tool that 
 \begin{itemize}
 \item Project name: NiemaGraphGen (NGG)
 \item Project home page: \url{https://github.com/niemasd/NiemaGraphGen}
+\item Docker Hub page: \url{https://hub.docker.com/r/niemasd/niemagraphgen}
 \item Operating system(s): Platform independent
 \item Programming language: C++
 \item Other requirements: C++11 or higher
 \item License: GNU GPL v3.0
+\item RRID: SCR\_021936
 \end{itemize}
 
-\section{Availability of Test Data}
+\section{Data Availability}
 
 The data sets supporting the results of this article, along with all relevant scripts and commands, are available in the following GitHub repository:
 
 \url{https://github.com/niemasd/NiemaGraphGen-Paper}
 
-The same data and scripts can be found in the following portable Code Ocean environment:
+The same data and scripts can be found in the following portable Code Ocean environment (Fig.~\ref{fig:code-ocean})~\cite{NGGCodeOcean}. Snapshots of the code is also available in the GigaScience GigaDB repository~\cite{NGGGigaDB}.
 
-\url{https://doi.org/10.24433/CO.4009211.v1}
+\begin{figure*}[h]%[b!]  %% Add a [b!] if you prefer the wide image to be at the bottm of the page
+\centering
+\includegraphics[width=\textwidth]{Fig2}
+\caption{An executable Code ocean compute capsule for NiemaGraphGen that can be launched on a cloud workstation. \url{https://doi.org/10.24433/CO.4009211.v1}}\label{fig:code-ocean}
+\end{figure*}
 
 \section{Declarations}
 

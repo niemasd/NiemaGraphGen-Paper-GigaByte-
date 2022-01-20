@@ -30,6 +30,7 @@ ENTRY
     chapter      % for incollection, esp. internet documents
     cartographer % for maps
     day
+    doi
     edition
     editor
     eid
@@ -603,6 +604,13 @@ INTEGERS { nameptr namesleft numnames }
 
 
 STRINGS  { bibinfo}
+
+FUNCTION {format.doi}
+{ doi empty$
+    { "" }
+    { new.block "doi: " doi * "}" * }
+  if$
+}
 
 FUNCTION {format.names}
 { 'bibinfo :=
@@ -1311,8 +1319,11 @@ FUNCTION {article}
   add.semicolon
   format.vol.num.pages output
   new.block
+  format.doi output
+  new.block
   format.note output
 %  output.web.refs  % urlbst
+  new.block
   fin.entry
 }
 
@@ -1418,20 +1429,15 @@ FUNCTION {inproceedings}
   new.block
   format.title "title" output.check
   new.block
-  format.in.ed.booktitle "booktitle" output.check
-  format.bvolume output
-  new.sentence
-  format.number.series output
-  publisher empty$
-    { format.organization.address output }
-    { organization "organization" bibinfo.check output
-      format.publisher.address output
-    }
-  if$
-  format.date "year" output.check
-  date.block
-  add.blank
-  format.pages "pages" output.check
+  journal
+  remove.dots
+  "journal" bibinfo.check
+  "journal" output.check
+  format.journal.date "year" output.check
+  add.semicolon
+  format.vol.num.pages output
+  new.block
+  format.doi output
   new.block
   format.note output
 %  output.web.refs  % urlbst
